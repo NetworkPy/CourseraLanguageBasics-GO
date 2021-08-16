@@ -11,11 +11,13 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 type TestCase struct {
 	Input   SearchRequest
 	IsError bool
+	Token   string
 }
 
 type Persons struct {
@@ -48,7 +50,11 @@ type PersonJson struct {
 }
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
-	
+
+	if r.Header.Get("AccessToken") != "token" {
+		http.Error(w, "", http.StatusUnauthorized)
+		return
+	}
 	query := r.FormValue("query")
 	// query := "Everett"
 	// Open file
@@ -103,6 +109,12 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 
 	orderField := r.FormValue("order_field")
 	orderBy := r.FormValue("order_by")
+
+	if orderBy != "0" && orderBy != "1" && orderBy != "-1" {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	switch orderField {
 	case "":
 		switch orderBy {
@@ -149,7 +161,10 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	default:
-		w.WriteHeader(http.StatusInternalServerError)
+		resp := SearchErrorResponse{Error: "ErrorBadOrderField"}
+		js, _ := json.Marshal(resp)
+		http.Error(w, "", http.StatusBadRequest)
+		w.Write([]byte(js))
 		return
 	}
 
@@ -173,6 +188,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    1,
 			},
 			IsError: true,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -183,6 +199,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    -1,
 			},
 			IsError: true,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -193,6 +210,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    -1,
 			},
 			IsError: true,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -203,6 +221,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    0,
 			},
 			IsError: false,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -213,6 +232,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    -1,
 			},
 			IsError: true,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -223,6 +243,7 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    -1,
 			},
 			IsError: true,
+			Token:   "token",
 		},
 		{
 			Input: SearchRequest{
@@ -233,6 +254,29 @@ func TestFindUser(t *testing.T) {
 				OrderBy:    -1,
 			},
 			IsError: true,
+			Token:   "token",
+		},
+		{
+			Input: SearchRequest{
+				Limit:      16,
+				Offset:     1,
+				Query:      "Lynn",
+				OrderField: "",
+				OrderBy:    0,
+			},
+			IsError: true,
+			Token:   "Badtoken",
+		},
+		{
+			Input: SearchRequest{
+				Limit:      16,
+				Offset:     1,
+				Query:      "Lynn",
+				OrderField: "",
+				OrderBy:    22,
+			},
+			IsError: true,
+			Token:   "token",
 		},
 	}
 
@@ -241,13 +285,162 @@ func TestFindUser(t *testing.T) {
 	for caseNum, item := range cases {
 		c := &SearchClient{
 			URL:         ts.URL,
-			AccessToken: "cnmcn2527dhalknoiywb",
+			AccessToken: item.Token,
 		}
 
 		_, err := c.FindUsers(item.Input)
 		if err != nil && !item.IsError {
 			t.Errorf("[%d] unexpected error: %#v", caseNum, err)
 		}
+	}
+	ts.Close()
+}
+
+func badJson(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+}
+
+func TestBadJson(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(badJson))
+	c := &SearchClient{
+		URL:         ts.URL,
+		AccessToken: "token",
+	}
+	item := TestCase{
+		Input: SearchRequest{
+			Limit:      16,
+			Offset:     1,
+			Query:      "Lynn",
+			OrderField: "",
+			OrderBy:    0,
+		},
+		IsError: true,
+		Token:   "Badtoken",
+	}
+	_, err := c.FindUsers(item.Input)
+	if err != nil && !item.IsError {
+		t.Errorf("unexpected error: %#v", err)
+	}
+	ts.Close()
+}
+
+func badReq(w http.ResponseWriter, r *http.Request) {
+	resp := SearchErrorResponse{Error: "ErrorUnknowBad"}
+	js, _ := json.Marshal(resp)
+	http.Error(w, "", http.StatusBadRequest)
+	w.Write([]byte(js))
+}
+
+func TestBadReq(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(badReq))
+	c := &SearchClient{
+		URL:         ts.URL,
+		AccessToken: "token",
+	}
+	item := TestCase{
+		Input: SearchRequest{
+			Limit:      16,
+			Offset:     1,
+			Query:      "Lynn",
+			OrderField: "",
+			OrderBy:    0,
+		},
+		IsError: true,
+		Token:   "Badtoken",
+	}
+	_, err := c.FindUsers(item.Input)
+	if err != nil && !item.IsError {
+		t.Errorf("unexpected error: %#v", err)
+	}
+	ts.Close()
+}
+
+func BadJsonForUnpack(w http.ResponseWriter, r *http.Request) {
+	resp := []byte(`{`)
+	w.Write(resp)
+}
+
+func TestBadJsonForUnpack(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(BadJsonForUnpack))
+	c := &SearchClient{
+		URL:         ts.URL,
+		AccessToken: "token",
+	}
+	item := TestCase{
+		Input: SearchRequest{
+			Limit:      16,
+			Offset:     1,
+			Query:      "Lynn",
+			OrderField: "",
+			OrderBy:    0,
+		},
+		IsError: true,
+		Token:   "Badtoken",
+	}
+	_, err := c.FindUsers(item.Input)
+	if err != nil && !item.IsError {
+		t.Errorf("unexpected error: %#v", err)
+	}
+	ts.Close()
+}
+
+func BadTimeOut(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte("[]"))
+
+	timer := time.NewTimer(1 * time.Second)
+	defer timer.Stop()
+	<-timer.C
+}
+
+func TestBadTimeOut(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(BadTimeOut))
+	c := &SearchClient{
+		URL:         ts.URL,
+		AccessToken: "token",
+	}
+	item := TestCase{
+		Input: SearchRequest{
+			Limit:      16,
+			Offset:     1,
+			Query:      "Lynn",
+			OrderField: "",
+			OrderBy:    0,
+		},
+		IsError: true,
+		Token:   "Badtoken",
+	}
+	_, err := c.FindUsers(item.Input)
+	if err != nil && !item.IsError {
+		t.Errorf("unexpected error: %#v", err)
+	}
+	ts.Close()
+}
+
+func ErroneousServer(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/test", http.StatusFound)
+}
+
+func TestErroneousServer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(ErroneousServer))
+	c := &SearchClient{
+		URL:         ts.URL,
+		AccessToken: "token",
+	}
+	item := TestCase{
+		Input: SearchRequest{
+			Limit:      16,
+			Offset:     1,
+			Query:      "Lynn",
+			OrderField: "",
+			OrderBy:    0,
+		},
+		IsError: true,
+		Token:   "Badtoken",
+	}
+	_, err := c.FindUsers(item.Input)
+	if err != nil && !item.IsError {
+		t.Errorf("unexpected error: %#v", err)
 	}
 	ts.Close()
 }
